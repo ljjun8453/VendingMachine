@@ -21,7 +21,7 @@ public class Server2 {
     private static int[] peerPorts = new int[10];
     private static int peerCount = 0;
 
-    private static String adminPassword = "admin!123";
+    private static String adminPassword = "12345678";
 
     private static String[] drinkNames = new String[DRINK_COUNT + 1];
     private static int[] drinkPrices = new int[DRINK_COUNT + 1];
@@ -39,27 +39,47 @@ public class Server2 {
     private static int[] monthlyDrinkSales = new int[DRINK_COUNT + 1];
 
     private static DrinkNode drinkListHead;
-    private static SimpleStack saleStack = new SimpleStack(200);
-    private static SimpleQueue lowStockQueue = new SimpleQueue(200);
-    private static PriceTree priceTree = new PriceTree();
 
     private static PrintWriter[] pushClientOuts = new PrintWriter[100];
     private static String[] pushClientNames = new String[100];
     private static int pushClientCount = 0;
 
+    private static final int SALE_STACK_SIZE = 100;
+    private static String[] saleStack = new String[SALE_STACK_SIZE];
+    private static int saleStackTop = -1;
+
+    private static final int ALERT_QUEUE_SIZE = 100;
+    private static String[] alertQueue = new String[ALERT_QUEUE_SIZE];
+    private static int alertFront = 0;
+    private static int alertRear = 0;
+    private static int alertCount = 0;
+
+    private static PriceTreeNode priceTreeRoot;
+
+    private static final int MACHINE_COUNT = 4;
+    private static String[] machineNames = {"", "클라이언트-1", "클라이언트-2", "클라이언트-3", "클라이언트-4"};
+    private static String[][] machineDrinkNames = new String[MACHINE_COUNT + 1][DRINK_COUNT + 1];
+    private static int[][] machineDrinkPrices = new int[MACHINE_COUNT + 1][DRINK_COUNT + 1];
+    private static int[][] machineDrinkStocks = new int[MACHINE_COUNT + 1][DRINK_COUNT + 1];
+    private static int[][] machineDrinkSoldCounts = new int[MACHINE_COUNT + 1][DRINK_COUNT + 1];
+    private static int[][] machineDailyDrinkSales = new int[MACHINE_COUNT + 1][DRINK_COUNT + 1];
+    private static int[][] machineMonthlyDrinkSales = new int[MACHINE_COUNT + 1][DRINK_COUNT + 1];
+    private static int[][] machineCoinCounts = new int[MACHINE_COUNT + 1][COIN_UNITS.length];
+    private static int[] machineBill1000Count = new int[MACHINE_COUNT + 1];
+    private static int[] machineDailyTotalSales = new int[MACHINE_COUNT + 1];
+    private static int[] machineMonthlyTotalSales = new int[MACHINE_COUNT + 1];
+    private static String[] machineAdminPassword = new String[MACHINE_COUNT + 1];
+
     public static void main(String[] args) {
-        role = "SERVER2";
+        role = "서버2";
         listenPort = 9002;
 
-        peerCount = 0;
-
-        peerHosts[peerCount] = "127.0.0.1";
-        peerPorts[peerCount] = 9001;
-        peerCount++;
-
-        peerHosts[peerCount] = "127.0.0.1";
-        peerPorts[peerCount] = 9003;
-        peerCount++;
+        peerHosts[0] = "127.0.0.1";
+        peerPorts[0] = 9001;
+        //peerHosts[1] = "127.0.0.1";
+        peerHosts[1] = "192.168.0.17";
+        peerPorts[1] = 9003;
+        peerCount = 2;
 
         initData();
         startHealthCheckThread();
@@ -100,7 +120,10 @@ public class Server2 {
         }
 
         rebuildDrinkLinkedList();
-        rebuildPriceTree();
+
+        for (int i = 1; i <= MACHINE_COUNT; i++) {
+            saveMachineState(i);
+        }
     }
 
     private static void startServer() {
@@ -182,6 +205,7 @@ public class Server2 {
         private BufferedReader in;
         private PrintWriter out;
         private String clientName = "UNKNOWN";
+        private int machineIndex = 1;
 
         private int insertedTotalAmount = 0;
         private int insertedBill1000Count = 0;
@@ -204,14 +228,9 @@ public class Server2 {
                 while ((message = in.readLine()) != null) {
                     if (message.equals("PING")) {
                         out.println("PONG");
-                    } else if (message.startsWith("SUBSCRIBE|")) {
-                        clientName = decode(message.substring(10));
-                        registerPushClient(clientName, out);
-                        out.println("SUBSCRIBE_OK");
                     } else if (message.startsWith("SYNC_STATE|")) {
-                        applyState(message.substring(11));
+                        receiveSyncState(message.substring(11));
                         out.println("SYNC_OK");
-                        broadcastStateToClients();
                     } else {
                         out.println(processCommand(message));
                     }
@@ -229,6 +248,12 @@ public class Server2 {
         private String processCommand(String command) {
             if (command.startsWith("HELLO|")) {
                 clientName = decode(command.substring(6));
+                machineIndex = getMachineIndex(clientName);
+
+                synchronized (Server2.class) {
+                    loadMachineState(machineIndex);
+                    registerPushClient(clientName, out);
+                }
 
                 System.out.println(
                         "[" + role + "] GUI 클라이언트 접속: " +
@@ -237,6 +262,16 @@ public class Server2 {
 
                 return makeResponse("OK", "", drinkOutput, changeOutput, insertedTotalAmount);
             }
+
+            synchronized (Server2.class) {
+                loadMachineState(machineIndex);
+                String response = processMachineCommand(command);
+                saveMachineState(machineIndex);
+                return response;
+            }
+        }
+
+        private String processMachineCommand(String command) {
             if (command.equals("STATUS")) {
                 return makeResponse("OK", "", drinkOutput, changeOutput, insertedTotalAmount);
             } else if (command.startsWith("INSERT|")) {
@@ -286,6 +321,13 @@ public class Server2 {
             return makeResponse("ERROR", "알 수 없는 요청입니다.", drinkOutput, changeOutput, insertedTotalAmount);
         }
 
+        private void saveAndBroadcastCurrentMachine() {
+            saveMachineState(machineIndex);
+            String state = makeState();
+            syncToPeers(clientName, state);
+            broadcastStateToClient(clientName, state);
+        }
+
         private String insertMoney(int money) {
             if (!isAllowedMoney(money)) {
                 changeOutput = "사용할 수 없는 화폐입니다.";
@@ -318,8 +360,7 @@ public class Server2 {
                 }
 
                 changeOutput = "0원";
-                syncToPeers();
-                broadcastStateToClients();
+                saveAndBroadcastCurrentMachine();
             }
 
             return makeResponse("OK", "", drinkOutput, changeOutput, insertedTotalAmount);
@@ -357,11 +398,8 @@ public class Server2 {
                 if (node != null) {
                     node.stock = drinkStocks[drinkId];
                     node.soldCount++;
-                    saleStack.push(node.name + " 판매");
-
                     if (node.stock <= 2) {
-                        lowStockQueue.offer(node.name + " 재고 부족: " + node.stock + "개");
-                        System.out.println("[" + role + "] 재고 부족 알림 큐 저장: " + node.name + " " + node.stock + "개");
+                        enqueueStockAlert(clientName, node.name, node.stock);
                     }
                 }
 
@@ -370,6 +408,7 @@ public class Server2 {
                 monthlyTotalSales += drinkPrices[drinkId];
                 dailyDrinkSales[drinkId] += drinkPrices[drinkId];
                 monthlyDrinkSales[drinkId] += drinkPrices[drinkId];
+                pushSaleRecord(clientName, drinkNames[drinkId], drinkPrices[drinkId], drinkStocks[drinkId]);
 
                 drinkOutput = drinkNames[drinkId];
 
@@ -383,8 +422,7 @@ public class Server2 {
                 insertedBill1000Count = 0;
                 clearInsertedCoins();
 
-                syncToPeers();
-                broadcastStateToClients();
+                saveAndBroadcastCurrentMachine();
 
                 return makeResponse("OK", "", drinkOutput, changeOutput, insertedTotalAmount);
             }
@@ -411,8 +449,7 @@ public class Server2 {
 
                 changeOutput = amount + "원";
 
-                syncToPeers();
-                broadcastStateToClients();
+                saveAndBroadcastCurrentMachine();
 
                 return makeResponse("OK", "", drinkOutput, changeOutput, insertedTotalAmount);
             }
@@ -431,8 +468,7 @@ public class Server2 {
                 drinkStocks[drinkId] += amount;
                 updateDrinkNode(drinkId);
 
-                syncToPeers();
-                broadcastStateToClients();
+                saveAndBroadcastCurrentMachine();
 
                 return makeResponse("DIALOG", drinkNames[drinkId] + " 재고를 " + amount + "개 보충했습니다.", drinkOutput, changeOutput, insertedTotalAmount);
             }
@@ -457,8 +493,7 @@ public class Server2 {
                 drinkNames[drinkId] = name.trim();
                 updateDrinkNode(drinkId);
 
-                syncToPeers();
-                broadcastStateToClients();
+                saveAndBroadcastCurrentMachine();
 
                 return makeResponse("DIALOG", "음료 이름을 변경했습니다.", drinkOutput, changeOutput, insertedTotalAmount);
             }
@@ -480,10 +515,8 @@ public class Server2 {
 
                 drinkPrices[drinkId] = price;
                 updateDrinkNode(drinkId);
-                rebuildPriceTree();
 
-                syncToPeers();
-                broadcastStateToClients();
+                saveAndBroadcastCurrentMachine();
 
                 return makeResponse("DIALOG", "판매 가격을 변경했습니다.", drinkOutput, changeOutput, insertedTotalAmount);
             }
@@ -504,8 +537,7 @@ public class Server2 {
                 collected += bill1000Count * 1000;
                 bill1000Count = 0;
 
-                syncToPeers();
-                broadcastStateToClients();
+                saveAndBroadcastCurrentMachine();
 
                 return makeResponse("DIALOG", "수금 완료: " + collected + "원\n10개를 초과한 동전과 지폐만 수금했습니다.", drinkOutput, changeOutput, insertedTotalAmount);
             }
@@ -519,8 +551,7 @@ public class Server2 {
 
                 adminPassword = password;
 
-                syncToPeers();
-                broadcastStateToClients();
+                saveAndBroadcastCurrentMachine();
 
                 return makeResponse("DIALOG", "관리자 비밀번호를 변경했습니다.", drinkOutput, changeOutput, insertedTotalAmount);
             }
@@ -538,8 +569,7 @@ public class Server2 {
                     }
                 }
 
-                syncToPeers();
-                broadcastStateToClients();
+                saveAndBroadcastCurrentMachine();
 
                 return makeResponse("DIALOG", "기본 화폐 보충 완료: " + added + "원\n부족한 동전만 10개까지 보충했습니다.", drinkOutput, changeOutput, insertedTotalAmount);
             }
@@ -552,9 +582,7 @@ public class Server2 {
         }
     }
 
-    private static synchronized void syncToPeers() {
-        String state = makeState();
-
+    private static synchronized void syncToPeers(String machineName, String state) {
         for (int i = 0; i < peerCount; i++) {
             Socket socket = null;
             BufferedReader in = null;
@@ -568,7 +596,7 @@ public class Server2 {
                 in = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
                 out = new PrintWriter(new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8), true);
 
-                out.println("SYNC_STATE|" + state);
+                out.println("SYNC_STATE|" + encode(machineName) + "|" + state);
                 in.readLine();
             } catch (IOException e) {
                 System.out.println("[" + role + "] 동기화 실패: " + peerHosts[i] + ":" + peerPorts[i]);
@@ -650,7 +678,6 @@ public class Server2 {
         }
 
         rebuildDrinkLinkedList();
-        rebuildPriceTree();
     }
 
     private static void rebuildDrinkLinkedList() {
@@ -668,6 +695,8 @@ public class Server2 {
 
             prev = node;
         }
+
+        rebuildPriceTree();
     }
 
     private static DrinkNode findDrinkNodeById(int id) {
@@ -711,12 +740,82 @@ public class Server2 {
         return -1;
     }
 
-    private static void rebuildPriceTree() {
-        priceTree = new PriceTree();
 
-        for (int i = 1; i <= DRINK_COUNT; i++) {
-            priceTree.insert(drinkPrices[i], i);
+
+    private static int getMachineIndex(String name) {
+        for (int i = 1; i <= MACHINE_COUNT; i++) {
+            if (machineNames[i].equals(name)) {
+                return i;
+            }
         }
+
+        return 1;
+    }
+
+    private static synchronized void loadMachineState(int machineIndex) {
+        for (int i = 1; i <= DRINK_COUNT; i++) {
+            drinkNames[i] = machineDrinkNames[machineIndex][i];
+            drinkPrices[i] = machineDrinkPrices[machineIndex][i];
+            drinkStocks[i] = machineDrinkStocks[machineIndex][i];
+            drinkSoldCounts[i] = machineDrinkSoldCounts[machineIndex][i];
+            dailyDrinkSales[i] = machineDailyDrinkSales[machineIndex][i];
+            monthlyDrinkSales[i] = machineMonthlyDrinkSales[machineIndex][i];
+        }
+
+        for (int i = 0; i < COIN_UNITS.length; i++) {
+            coinCounts[i] = machineCoinCounts[machineIndex][i];
+        }
+
+        bill1000Count = machineBill1000Count[machineIndex];
+        dailyTotalSales = machineDailyTotalSales[machineIndex];
+        monthlyTotalSales = machineMonthlyTotalSales[machineIndex];
+
+        if (machineAdminPassword[machineIndex] == null) {
+            machineAdminPassword[machineIndex] = adminPassword;
+        }
+
+        adminPassword = machineAdminPassword[machineIndex];
+
+        rebuildDrinkLinkedList();
+    }
+
+    private static synchronized void saveMachineState(int machineIndex) {
+        for (int i = 1; i <= DRINK_COUNT; i++) {
+            machineDrinkNames[machineIndex][i] = drinkNames[i];
+            machineDrinkPrices[machineIndex][i] = drinkPrices[i];
+            machineDrinkStocks[machineIndex][i] = drinkStocks[i];
+            machineDrinkSoldCounts[machineIndex][i] = drinkSoldCounts[i];
+            machineDailyDrinkSales[machineIndex][i] = dailyDrinkSales[i];
+            machineMonthlyDrinkSales[machineIndex][i] = monthlyDrinkSales[i];
+        }
+
+        for (int i = 0; i < COIN_UNITS.length; i++) {
+            machineCoinCounts[machineIndex][i] = coinCounts[i];
+        }
+
+        machineBill1000Count[machineIndex] = bill1000Count;
+        machineDailyTotalSales[machineIndex] = dailyTotalSales;
+        machineMonthlyTotalSales[machineIndex] = monthlyTotalSales;
+        machineAdminPassword[machineIndex] = adminPassword;
+    }
+
+    private static synchronized void receiveSyncState(String syncData) {
+        String[] part = syncData.split("\\|", 2);
+
+        if (part.length < 2) {
+            return;
+        }
+
+        String machineName = decode(part[0]);
+        String state = part[1];
+        int machineIndex = getMachineIndex(machineName);
+
+        loadMachineState(machineIndex);
+        applyState(state);
+        saveMachineState(machineIndex);
+        broadcastStateToClient(machineName, state);
+
+        System.out.println("[" + role + "] 서버 동기화 데이터 수신: " + machineName);
     }
 
     private static synchronized void registerPushClient(String name, PrintWriter out) {
@@ -724,7 +823,7 @@ public class Server2 {
             pushClientNames[pushClientCount] = name;
             pushClientOuts[pushClientCount] = out;
             pushClientCount++;
-            System.out.println("[" + role + "] 실시간 동기화 클라이언트 등록: " + name);
+            System.out.println("[" + role + "] 실시간 동기화 클라이언트: " + name);
         }
     }
 
@@ -752,17 +851,97 @@ public class Server2 {
         pushClientNames[pushClientCount] = null;
     }
 
-    private static synchronized void broadcastStateToClients() {
-        String message = "PUSH_STATE|" + makeState();
+    private static synchronized void broadcastStateToClient(String machineName, String state) {
+        String message = "PUSH_STATE|" + state;
 
         for (int i = 0; i < pushClientCount; i++) {
-            pushClientOuts[i].println(message);
+            if (pushClientNames[i] != null && pushClientNames[i].equals(machineName)) {
+                pushClientOuts[i].println(message);
 
-            if (pushClientOuts[i].checkError()) {
-                removePushClientAt(i);
-                i--;
+                if (pushClientOuts[i].checkError()) {
+                    removePushClientAt(i);
+                    i--;
+                }
             }
         }
+    }
+
+    private static void pushSaleRecord(String machineName, String drinkName, int price, int stock) {
+        String record = java.time.LocalDateTime.now() + " / " + machineName + " / " + drinkName + " / " + price + "원 / 남은재고 " + stock + "개";
+
+        if (saleStackTop >= SALE_STACK_SIZE - 1) {
+            for (int i = 0; i < SALE_STACK_SIZE - 1; i++) {
+                saleStack[i] = saleStack[i + 1];
+            }
+
+            saleStackTop = SALE_STACK_SIZE - 2;
+        }
+
+        saleStackTop++;
+        saleStack[saleStackTop] = record;
+        System.out.println("[" + role + "] 판매 기록 저장: " + saleStack[saleStackTop]);
+    }
+
+    private static void enqueueStockAlert(String machineName, String drinkName, int stock) {
+        String alert = java.time.LocalDateTime.now() + " / " + machineName + " / " + drinkName + " 재고 부족: " + stock + "개";
+
+        if (alertCount >= ALERT_QUEUE_SIZE) {
+            alertFront++;
+
+            if (alertFront >= ALERT_QUEUE_SIZE) {
+                alertFront = 0;
+            }
+
+            alertCount--;
+        }
+
+        alertQueue[alertRear] = alert;
+        alertRear++;
+
+        if (alertRear >= ALERT_QUEUE_SIZE) {
+            alertRear = 0;
+        }
+
+        alertCount++;
+        System.out.println("[" + role + "] 관리자 알림: " + alert);
+    }
+
+    private static void rebuildPriceTree() {
+        priceTreeRoot = null;
+
+        for (int i = 1; i <= DRINK_COUNT; i++) {
+            priceTreeRoot = insertPriceTree(priceTreeRoot, i, drinkNames[i], drinkPrices[i]);
+        }
+    }
+
+    private static PriceTreeNode insertPriceTree(PriceTreeNode root, int id, String name, int price) {
+        if (root == null) {
+            return new PriceTreeNode(id, name, price);
+        }
+
+        if (price < root.price) {
+            root.left = insertPriceTree(root.left, id, name, price);
+        } else if (price > root.price) {
+            root.right = insertPriceTree(root.right, id, name, price);
+        } else {
+            if (id < root.id) {
+                root.left = insertPriceTree(root.left, id, name, price);
+            } else {
+                root.right = insertPriceTree(root.right, id, name, price);
+            }
+        }
+
+        return root;
+    }
+
+    private static void appendPriceTreeText(StringBuilder sb, PriceTreeNode node) {
+        if (node == null) {
+            return;
+        }
+
+        appendPriceTreeText(sb, node.left);
+        sb.append(node.name).append(": ").append(node.price).append("원\n");
+        appendPriceTreeText(sb, node.right);
     }
 
     private static class DrinkNode {
@@ -787,117 +966,19 @@ public class Server2 {
         }
     }
 
-    private static class SimpleStack {
-        private String[] data;
-        private int top;
-
-        SimpleStack(int size) {
-            data = new String[size];
-            top = -1;
-        }
-
-        void push(String value) {
-            if (top < data.length - 1) {
-                top++;
-                data[top] = value;
-            }
-        }
-
-        String pop() {
-            if (top < 0) {
-                return null;
-            }
-
-            String value = data[top];
-            data[top] = null;
-            top--;
-            return value;
-        }
-    }
-
-    private static class SimpleQueue {
-        private String[] data;
-        private int front;
-        private int rear;
-        private int count;
-
-        SimpleQueue(int size) {
-            data = new String[size];
-            front = 0;
-            rear = 0;
-            count = 0;
-        }
-
-        void offer(String value) {
-            if (count < data.length) {
-                data[rear] = value;
-                rear = (rear + 1) % data.length;
-                count++;
-            }
-        }
-
-        String poll() {
-            if (count == 0) {
-                return null;
-            }
-
-            String value = data[front];
-            data[front] = null;
-            front = (front + 1) % data.length;
-            count--;
-            return value;
-        }
-    }
-
     private static class PriceTreeNode {
+        int id;
+        String name;
         int price;
-        int drinkId;
         PriceTreeNode left;
         PriceTreeNode right;
 
-        PriceTreeNode(int price, int drinkId) {
+        PriceTreeNode(int id, String name, int price) {
+            this.id = id;
+            this.name = name;
             this.price = price;
-            this.drinkId = drinkId;
             this.left = null;
             this.right = null;
-        }
-    }
-
-    private static class PriceTree {
-        private PriceTreeNode root;
-
-        void insert(int price, int drinkId) {
-            root = insertNode(root, price, drinkId);
-        }
-
-        private PriceTreeNode insertNode(PriceTreeNode node, int price, int drinkId) {
-            if (node == null) {
-                return new PriceTreeNode(price, drinkId);
-            }
-
-            if (price < node.price) {
-                node.left = insertNode(node.left, price, drinkId);
-            } else {
-                node.right = insertNode(node.right, price, drinkId);
-            }
-
-            return node;
-        }
-
-        int search(int price) {
-            PriceTreeNode current = root;
-
-            while (current != null) {
-                if (price == current.price) {
-                    return current.drinkId;
-                } else if (price < current.price) {
-                    current = current.left;
-                } else {
-                    current = current.right;
-                }
-            }
-
-            return -1;
         }
     }
 
@@ -1029,11 +1110,15 @@ public class Server2 {
             }
         }
 
-        sb.append("\n[월별 매출 정렬 결과]\n");
+        sb.append("\n[월별 매출 순위]\n");
 
         for (int i = 0; i < DRINK_COUNT; i++) {
             sb.append(i + 1).append("위: ").append(drinkNames[sortIds[i]]).append(" ").append(sortValues[i]).append("원\n");
         }
+
+        sb.append("\n[가격순 음료 목록]\n");
+        rebuildPriceTree();
+        appendPriceTreeText(sb, priceTreeRoot);
 
         return sb.toString();
     }

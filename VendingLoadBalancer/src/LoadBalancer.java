@@ -5,11 +5,32 @@ import java.net.Socket;
 
 public class LoadBalancer {
     private static final int LISTEN_PORT = 9000;
-    private static final String[] SERVER_HOSTS = {"127.0.0.1", "127.0.0.1"};
-    private static final int[] SERVER_PORTS = {9001, 9002};
+
+//    로컬로 돌릴 때
+//    private static final String[] SERVER_HOSTS = {
+//            "12.0.0.1",
+//            "12.0.0.1"
+//    };
+
+//  서버로 돌릴 때
+    private static final String[] SERVER_HOSTS = {
+            "192.168.0.14",
+            "192.168.0.14"
+    };
+
+    private static final int[] SERVER_PORTS = {
+            9001,
+            9002
+    };
+
     private static final String BACKUP_SERVER_HOST = "127.0.0.1";
     private static final int BACKUP_SERVER_PORT = 9003;
-    private static final boolean[] serverAlive = {true, true};
+
+    private static final boolean[] serverAlive = {
+            true,
+            true
+    };
+
     private static boolean backupAlive = true;
     private static int nextServerIndex = 0;
 
@@ -20,7 +41,7 @@ public class LoadBalancer {
 
         try {
             listenSocket = new ServerSocket(LISTEN_PORT);
-            System.out.println("[LOAD_BALANCER] TCP 로드밸런서 시작, 포트: " + LISTEN_PORT);
+            System.out.println("[로드밸런서] TCP 로드밸런서 시작, 포트: " + LISTEN_PORT);
 
             while (true) {
                 Socket clientSocket = listenSocket.accept();
@@ -28,14 +49,14 @@ public class LoadBalancer {
                 thread.start();
             }
         } catch (IOException e) {
-            System.out.println("[LOAD_BALANCER] 오류: " + e.getMessage());
+            System.out.println("[로드밸런서] 오류: " + e.getMessage());
         } finally {
             try {
                 if (listenSocket != null) {
                     listenSocket.close();
                 }
             } catch (IOException e) {
-                System.out.println("[LOAD_BALANCER] 종료 오류: " + e.getMessage());
+                System.out.println("[로드밸런서] 종료 오류: " + e.getMessage());
             }
         }
     }
@@ -49,17 +70,19 @@ public class LoadBalancer {
     private static class LoadBalancerHealthThread extends Thread {
         public void run() {
             while (true) {
-                for (int i = 0; i < SERVER_PORTS.length; i++) {
-                    serverAlive[i] = checkServer(SERVER_HOSTS[i], SERVER_PORTS[i]);
-                }
-
+                serverAlive[0] = checkServer(SERVER_HOSTS[0], SERVER_PORTS[0]);
+                serverAlive[1] = checkServer(SERVER_HOSTS[1], SERVER_PORTS[1]);
                 backupAlive = checkServer(BACKUP_SERVER_HOST, BACKUP_SERVER_PORT);
+
+                System.out.println("[로드밸런서] 서버1 상태: " + serverAlive[0]);
+                System.out.println("[로드밸런서] 서버2 상태: " + serverAlive[1]);
+                System.out.println("[로드밸런서] 백업서버 상태: " + backupAlive);
 
                 if (!serverAlive[0] || !serverAlive[1]) {
                     if (backupAlive) {
-                        System.out.println("[LOAD_BALANCER] 서버 장애 감지, Backup_Server 대체 가능");
+                        System.out.println("[로드밸런서] 서버 장애 감지, 백업서버 대체 가능");
                     } else {
-                        System.out.println("[LOAD_BALANCER] 서버 장애 감지, Backup_Server 연결 불가");
+                        System.out.println("[로드밸런서] 서버 장애 감지, 백업서버 연결 불가");
                     }
                 }
 
@@ -88,7 +111,12 @@ public class LoadBalancer {
             out.println("PING");
 
             String response = in.readLine();
-            return "PONG".equals(response);
+
+            if ("PONG".equals(response)) {
+                return true;
+            }
+
+            return false;
         } catch (IOException e) {
             return false;
         } finally {
@@ -100,6 +128,7 @@ public class LoadBalancer {
 
     private static synchronized int getNextServerIndex() {
         int index = nextServerIndex;
+
         nextServerIndex++;
 
         if (nextServerIndex >= SERVER_PORTS.length) {
@@ -123,15 +152,29 @@ public class LoadBalancer {
                 serverSocket = connectBackendServer();
 
                 if (serverSocket == null) {
-                    System.out.println("[LOAD_BALANCER] 연결 가능한 서버 없음: " + clientSocket.getRemoteSocketAddress());
+                    System.out.println("[로드밸런서] 연결 가능한 서버 없음: " + clientSocket.getRemoteSocketAddress());
                     closeSocket(clientSocket);
                     return;
                 }
 
-                System.out.println("[LOAD_BALANCER] 클라이언트 연결: " + clientSocket.getRemoteSocketAddress() + " -> " + selectedServerName);
+                System.out.println("[로드밸런서] 클라이언트 연결: "
+                        + clientSocket.getRemoteSocketAddress()
+                        + " -> "
+                        + selectedServerName);
 
-                ForwardThread clientToServer = new ForwardThread(clientSocket.getInputStream(), serverSocket.getOutputStream(), clientSocket, serverSocket);
-                ForwardThread serverToClient = new ForwardThread(serverSocket.getInputStream(), clientSocket.getOutputStream(), serverSocket, clientSocket);
+                ForwardThread clientToServer = new ForwardThread(
+                        clientSocket.getInputStream(),
+                        serverSocket.getOutputStream(),
+                        clientSocket,
+                        serverSocket
+                );
+
+                ForwardThread serverToClient = new ForwardThread(
+                        serverSocket.getInputStream(),
+                        clientSocket.getOutputStream(),
+                        serverSocket,
+                        clientSocket
+                );
 
                 clientToServer.start();
                 serverToClient.start();
@@ -146,56 +189,49 @@ public class LoadBalancer {
                 } catch (InterruptedException e) {
                 }
             } catch (IOException e) {
-                System.out.println("[LOAD_BALANCER] 중계 오류: " + e.getMessage());
+                System.out.println("[로드밸런서] 중계 오류: " + e.getMessage());
             } finally {
                 closeSocket(clientSocket);
                 closeSocket(serverSocket);
-                System.out.println("[LOAD_BALANCER] 접속 종료: " + selectedServerName);
+                System.out.println("[로드밸런서] 접속 종료: " + selectedServerName);
             }
         }
 
         private Socket connectBackendServer() {
-            int firstIndex = getNextServerIndex();
-            int secondIndex = firstIndex == 0 ? 1 : 0;
+            int targetIndex = getNextServerIndex();
             Socket socket;
 
-            socket = connectPrimaryServer(firstIndex);
+            if (serverAlive[targetIndex]) {
+                socket = connectServer(SERVER_HOSTS[targetIndex], SERVER_PORTS[targetIndex]);
 
-            if (socket != null) {
-                return socket;
+                if (socket != null) {
+                    selectedServerName = "서버" + (targetIndex + 1)
+                            + "(" + SERVER_HOSTS[targetIndex]
+                            + ":"
+                            + SERVER_PORTS[targetIndex]
+                            + ")";
+                    return socket;
+                }
+
+                serverAlive[targetIndex] = false;
             }
 
-            socket = connectPrimaryServer(secondIndex);
+            if (backupAlive) {
+                socket = connectServer(BACKUP_SERVER_HOST, BACKUP_SERVER_PORT);
 
-            if (socket != null) {
-                return socket;
+                if (socket != null) {
+                    selectedServerName = "백업서버 대신 연결됨, 원래 대상 서버"
+                            + (targetIndex + 1)
+                            + "(" + BACKUP_SERVER_HOST
+                            + ":"
+                            + BACKUP_SERVER_PORT
+                            + ")";
+                    return socket;
+                }
+
+                backupAlive = false;
             }
 
-            socket = connectServer(BACKUP_SERVER_HOST, BACKUP_SERVER_PORT);
-
-            if (socket != null) {
-                selectedServerName = "BACKUP(" + BACKUP_SERVER_HOST + ":" + BACKUP_SERVER_PORT + ")";
-                return socket;
-            }
-
-            return null;
-        }
-
-        private Socket connectPrimaryServer(int index) {
-            Socket socket;
-
-            if (!serverAlive[index]) {
-                return null;
-            }
-
-            socket = connectServer(SERVER_HOSTS[index], SERVER_PORTS[index]);
-
-            if (socket != null) {
-                selectedServerName = "SERVER" + (index + 1) + "(" + SERVER_HOSTS[index] + ":" + SERVER_PORTS[index] + ")";
-                return socket;
-            }
-
-            serverAlive[index] = false;
             return null;
         }
 

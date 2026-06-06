@@ -14,15 +14,12 @@ import java.util.Base64;
 public class Client4 extends JFrame implements ActionListener {
     private static final int DRINK_COUNT = 8;
     private static final int DEFAULT_STOCK = 10;
-    private static final int MAX_TOTAL_MONEY = 7000;
-    private static final int MAX_BILL_MONEY = 5000;
     private static final int[] MONEY_UNITS = {10, 50, 100, 500, 1000};
     private static final int[] COIN_UNITS = {500, 100, 50, 10};
     private static final int RESERVE_COIN_COUNT = 10;
-    private static final String LOAD_BALANCER_HOST = "127.0.0.1";
+    //private static final String LOAD_BALANCER_HOST = "127.0.0.1";
+    private static final String LOAD_BALANCER_HOST = "vending.jaejun.net";
     private static final int LOAD_BALANCER_PORT = 9000;
-
-    private String adminPassword = "admin!123";
 
     private String[] drinkNames = new String[DRINK_COUNT + 1];
     private int[] drinkPrices = new int[DRINK_COUNT + 1];
@@ -32,8 +29,6 @@ public class Client4 extends JFrame implements ActionListener {
     private int drinkHead = 1;
 
     private int insertedTotalAmount = 0;
-    private int insertedBill1000Count = 0;
-    private int[] insertedCoinCounts = new int[COIN_UNITS.length];
 
     private int[] coinCounts = new int[COIN_UNITS.length];
     private int bill1000Count = 0;
@@ -62,12 +57,9 @@ public class Client4 extends JFrame implements ActionListener {
     private Socket socket;
     private BufferedReader in;
     private PrintWriter out;
-    private Socket pushSocket;
-    private BufferedReader pushIn;
-    private PrintWriter pushOut;
-    private PushThread pushThread;
+    private ReceiverThread receiverThread;
     private String connectedServerName = "서버 미연결";
-    private String clientName = "CLIENT-4";
+    private String clientName = "클라이언트-4";
 
     public static void main(String[] args) {
         new Client4();
@@ -467,13 +459,7 @@ public class Client4 extends JFrame implements ActionListener {
             cardLayout.show(mainPanel, "ADMIN_LOGIN");
         } else if (command.equals("LOGIN_ADMIN")) {
             String inputPassword = adminPasswordField.getText();
-            String response = sendRequest("ADMIN_LOGIN|" + encode(inputPassword));
-
-            if (response != null && response.startsWith("RES|LOGIN_OK|")) {
-                adminPasswordField.setText("");
-                updateAllView();
-                cardLayout.show(mainPanel, "ADMIN");
-            }
+            sendRequest("ADMIN_LOGIN|" + encode(inputPassword));
         } else if (command.equals("BACK_TO_SALE")) {
             adminPasswordField.setText("");
             cardLayout.show(mainPanel, "SALE");
@@ -621,13 +607,10 @@ public class Client4 extends JFrame implements ActionListener {
             connectedServerName = LOAD_BALANCER_HOST + ":" + LOAD_BALANCER_PORT;
 
             out.println("HELLO|" + encode(clientName));
-            String helloResponse = in.readLine();
 
-            if (helloResponse != null) {
-                applyResponse(helloResponse);
-            }
+            receiverThread = new ReceiverThread();
+            receiverThread.start();
 
-            startPushConnection();
             changeOutputLabel.setText("로드밸런서 연결 완료: " + connectedServerName);
             return;
         } catch (IOException ex) {
@@ -639,32 +622,17 @@ public class Client4 extends JFrame implements ActionListener {
     }
 
     private String sendRequest(String request) {
-        if (socket == null || socket.isClosed() || out == null || in == null) {
+        if (socket == null || socket.isClosed() || out == null) {
             connectServer();
         }
 
-        if (socket == null || socket.isClosed() || out == null || in == null) {
+        if (socket == null || socket.isClosed() || out == null) {
             changeOutputLabel.setText("서버 연결 실패");
             return null;
         }
 
-        try {
-            out.println(request);
-            String response = in.readLine();
-
-            if (response == null) {
-                closeConnection();
-                connectServer();
-                return null;
-            }
-
-            applyResponse(response);
-            return response;
-        } catch (IOException ex) {
-            closeConnection();
-            connectServer();
-            return null;
-        }
+        out.println(request);
+        return null;
     }
 
     private void applyResponse(String response) {
@@ -696,6 +664,10 @@ public class Client4 extends JFrame implements ActionListener {
 
         if (result.equals("DIALOG")) {
             JOptionPane.showMessageDialog(this, message, "관리자 메뉴", JOptionPane.INFORMATION_MESSAGE);
+        } else if (result.equals("LOGIN_OK")) {
+            adminPasswordField.setText("");
+            updateAllView();
+            cardLayout.show(mainPanel, "ADMIN");
         } else if (result.equals("LOGIN_FAIL")) {
             JOptionPane.showMessageDialog(this, message, "로그인 실패", JOptionPane.ERROR_MESSAGE);
         } else if (result.equals("ERROR")) {
@@ -737,69 +709,35 @@ public class Client4 extends JFrame implements ActionListener {
         dailyTotalSales = Integer.parseInt(part[8]);
         monthlyTotalSales = Integer.parseInt(part[9]);
 
-        if (part.length >= 11) {
-            adminPassword = decode(part[10]);
-        }
     }
 
-    private void startPushConnection() {
-        stopPushConnection();
-
-        try {
-            pushSocket = new Socket();
-            pushSocket.connect(new InetSocketAddress(LOAD_BALANCER_HOST, LOAD_BALANCER_PORT), 1500);
-
-            pushIn = new BufferedReader(new InputStreamReader(pushSocket.getInputStream(), StandardCharsets.UTF_8));
-            pushOut = new PrintWriter(new OutputStreamWriter(pushSocket.getOutputStream(), StandardCharsets.UTF_8), true);
-
-            pushOut.println("SUBSCRIBE|" + encode(clientName));
-            String response = pushIn.readLine();
-
-            if ("SUBSCRIBE_OK".equals(response)) {
-                pushThread = new PushThread();
-                pushThread.start();
-            }
-        } catch (IOException e) {
-            stopPushConnection();
-        }
-    }
-
-    private void stopPushConnection() {
-        try {
-            if (pushIn != null) {
-                pushIn.close();
-            }
-        } catch (IOException e) {
-        }
-
-        if (pushOut != null) {
-            pushOut.close();
-        }
-
-        try {
-            if (pushSocket != null) {
-                pushSocket.close();
-            }
-        } catch (IOException e) {
-        }
-
-        pushIn = null;
-        pushOut = null;
-        pushSocket = null;
-    }
-
-    private class PushThread extends Thread {
+    private class ReceiverThread extends Thread {
         public void run() {
             String message;
 
             try {
-                while (pushIn != null && (message = pushIn.readLine()) != null) {
-                    if (message.startsWith("PUSH_STATE|")) {
+                while (in != null && (message = in.readLine()) != null) {
+                    if (message.startsWith("RES|")) {
+                        SwingUtilities.invokeLater(new ResponseUpdateTask(message));
+                    } else if (message.startsWith("PUSH_STATE|")) {
                         SwingUtilities.invokeLater(new PushUpdateTask(message.substring(11)));
                     }
                 }
             } catch (IOException e) {
+                SwingUtilities.invokeLater(new ServerCloseTask());
             }
+        }
+    }
+
+    private class ResponseUpdateTask implements Runnable {
+        private String response;
+
+        ResponseUpdateTask(String response) {
+            this.response = response;
+        }
+
+        public void run() {
+            applyResponse(response);
         }
     }
 
@@ -813,6 +751,12 @@ public class Client4 extends JFrame implements ActionListener {
         public void run() {
             applyState(state);
             updateAllView();
+        }
+    }
+
+    private class ServerCloseTask implements Runnable {
+        public void run() {
+            changeOutputLabel.setText("서버 연결 종료");
         }
     }
 
@@ -835,6 +779,7 @@ public class Client4 extends JFrame implements ActionListener {
         } catch (IOException e) {
         }
 
+        receiverThread = null;
         in = null;
         out = null;
         socket = null;
