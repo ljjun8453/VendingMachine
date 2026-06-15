@@ -4,36 +4,39 @@ import java.net.ServerSocket;
 import java.net.Socket;
 
 public class LoadBalancer {
+    // 로드밸런서의 포트번호 : 9000
     private static final int LISTEN_PORT = 9000;
 
-//    로컬로 돌릴 때
-//    private static final String[] SERVER_HOSTS = {
-//            "12.0.0.1",
-//            "12.0.0.1"
-//    };
-
-//  서버로 돌릴 때
+//  로컬로 돌릴 때
     private static final String[] SERVER_HOSTS = {
-            "192.168.0.14",
-            "192.168.0.14"
+            "127.0.0.1",
+            "127.0.0.1"
     };
 
+//  서버로 돌릴 때
+//    private static final String[] SERVER_HOSTS = {
+//            "192.168.0.14",
+//            "192.168.0.14"
+//    };
+
+    // 서버1과 서버2의 포트번호
     private static final int[] SERVER_PORTS = {
             9001,
             9002
     };
-
+    // 백업서버의 주소와 포트번호
     private static final String BACKUP_SERVER_HOST = "127.0.0.1";
     private static final int BACKUP_SERVER_PORT = 9003;
 
     private static final boolean[] serverAlive = {
             true,
             true
-    };
+    };// 서버1, 서버2의 동작 상태 저장 배열
 
-    private static boolean backupAlive = true;
-    private static int nextServerIndex = 0;
+    private static boolean backupAlive = true;// 백업 서버의 동작 상태
+    private static int nextServerIndex = 0;// 라운드 로빈 방식으로 다음 연결 서버를 선택하기 위한 인덱스
 
+    // 로드밸런서를 시작하고 클라이언트 접속을 백엔드 서버로 중계한다.
     public static void main(String[] args) {
         ServerSocket listenSocket = null;
 
@@ -60,7 +63,7 @@ public class LoadBalancer {
             }
         }
     }
-
+    // 백엔드 서버 상태를 주기적으로 검사하는 헬스체크 스레드를 시작한다.
     private static void startHealthCheckThread() {
         LoadBalancerHealthThread thread = new LoadBalancerHealthThread();
         thread.setDaemon(true);
@@ -68,6 +71,7 @@ public class LoadBalancer {
     }
 
     private static class LoadBalancerHealthThread extends Thread {
+        // 서버1, 서버2, 백업서버의 상태를 주기적으로 확인한다.
         public void run() {
             while (true) {
                 serverAlive[0] = checkServer(SERVER_HOSTS[0], SERVER_PORTS[0]);
@@ -80,7 +84,7 @@ public class LoadBalancer {
 
                 if (!serverAlive[0] || !serverAlive[1]) {
                     if (backupAlive) {
-                        System.out.println("[로드밸런서] 서버 장애 감지, 백업서버 대체 가능");
+                        System.out.println("[로드밸런서] 서버 장애 감지, 백업서버 작동 중");
                     } else {
                         System.out.println("[로드밸런서] 서버 장애 감지, 백업서버 연결 불가");
                     }
@@ -94,7 +98,7 @@ public class LoadBalancer {
             }
         }
     }
-
+    // 지정된 서버에 PING을 전송하고 PONG 응답 여부로 서버 상태를 판단한다.
     private static boolean checkServer(String host, int port) {
         Socket socket = null;
         BufferedReader in = null;
@@ -125,7 +129,7 @@ public class LoadBalancer {
             closeSocket(socket);
         }
     }
-
+    // 라운드 로빈 방식으로 다음 연결 대상 서버 인덱스를 반환한다.
     private static synchronized int getNextServerIndex() {
         int index = nextServerIndex;
 
@@ -142,11 +146,11 @@ public class LoadBalancer {
         private Socket clientSocket;
         private Socket serverSocket;
         private String selectedServerName = "NONE";
-
+        // 클라이언트 소켓을 저장하여 로드밸런싱 처리 스레드를 생성한다.
         LoadBalancerThread(Socket clientSocket) {
             this.clientSocket = clientSocket;
         }
-
+        // 클라이언트와 선택된 백엔드 서버 사이의 양방향 중계를 수행한다.
         public void run() {
             try {
                 serverSocket = connectBackendServer();
@@ -196,7 +200,7 @@ public class LoadBalancer {
                 System.out.println("[로드밸런서] 접속 종료: " + selectedServerName);
             }
         }
-
+        // 상태가 정상인 백엔드 서버 또는 백업 서버에 연결한다.
         private Socket connectBackendServer() {
             int targetIndex = getNextServerIndex();
             Socket socket;
@@ -220,12 +224,13 @@ public class LoadBalancer {
                 socket = connectServer(BACKUP_SERVER_HOST, BACKUP_SERVER_PORT);
 
                 if (socket != null) {
-                    selectedServerName = "백업서버 대신 연결됨, 원래 대상 서버"
+                    selectedServerName = "원래 대상 서버"
                             + (targetIndex + 1)
                             + "(" + BACKUP_SERVER_HOST
                             + ":"
                             + BACKUP_SERVER_PORT
-                            + ")";
+                            + ")"
+                            + " 대신 백업서버로 연결됨";
                     return socket;
                 }
 
@@ -234,7 +239,7 @@ public class LoadBalancer {
 
             return null;
         }
-
+        // 지정된 호스트와 포트로 TCP 연결을 시도한다.
         private Socket connectServer(String host, int port) {
             Socket socket = null;
 
@@ -254,14 +259,14 @@ public class LoadBalancer {
         private OutputStream outputStream;
         private Socket inputSocket;
         private Socket outputSocket;
-
+        // 한 방향의 입력 스트림 데이터를 출력 스트림으로 전달하는 중계 스레드를 생성한다.
         ForwardThread(InputStream inputStream, OutputStream outputStream, Socket inputSocket, Socket outputSocket) {
             this.inputStream = inputStream;
             this.outputStream = outputStream;
             this.inputSocket = inputSocket;
             this.outputSocket = outputSocket;
         }
-
+        // 입력 스트림에서 읽은 데이터를 출력 스트림으로 계속 전달한다.
         public void run() {
             byte[] buffer = new byte[4096];
             int length;
@@ -278,7 +283,7 @@ public class LoadBalancer {
             }
         }
     }
-
+    // BufferedReader 자원을 안전하게 종료한다.
     private static void closeReader(BufferedReader reader) {
         try {
             if (reader != null) {
@@ -287,13 +292,13 @@ public class LoadBalancer {
         } catch (IOException e) {
         }
     }
-
+    // PrintWriter 자원을 안전하게 종료한다.
     private static void closeWriter(PrintWriter writer) {
         if (writer != null) {
             writer.close();
         }
     }
-
+    // Socket 자원을 안전하게 종료한다.
     private static void closeSocket(Socket socket) {
         try {
             if (socket != null) {

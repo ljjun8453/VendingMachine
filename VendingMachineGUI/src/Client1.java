@@ -3,8 +3,7 @@ import javax.swing.border.EmptyBorder;
 import javax.swing.border.LineBorder;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
-import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
+import java.awt.event.*;
 import java.io.*;
 import java.net.InetSocketAddress;
 import java.net.Socket;
@@ -12,59 +11,61 @@ import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 
 public class Client1 extends JFrame implements ActionListener {
-    private static final int DRINK_COUNT = 8;
-    private static final int DEFAULT_STOCK = 10;
-    private static final int[] MONEY_UNITS = {10, 50, 100, 500, 1000};
-    private static final int[] COIN_UNITS = {500, 100, 50, 10};
-    private static final int RESERVE_COIN_COUNT = 10;
-    //private static final String LOAD_BALANCER_HOST = "127.0.0.1";
-    private static final String LOAD_BALANCER_HOST = "vending.jaejun.net";
-    private static final int LOAD_BALANCER_PORT = 9000;
+    private static final int DRINK_COUNT = 8;// 판매할 음료 개수
+    private static final int DEFAULT_STOCK = 10;// 음료별 기본 재고 수량
+    private static final int[] MONEY_UNITS = {10, 50, 100, 500, 1000};// 투입 가능한 화폐 단위
+    private static final int[] COIN_UNITS = {500, 100, 50, 10};// 거스름돈 계산에 사용할 동전 단위
+    private static final int RESERVE_COIN_COUNT = 10;// 기본 보유 동전 개수
+    // 접속할 로드밸런서 주소
+    private static final String LOAD_BALANCER_HOST = "127.0.0.1";
+    //private static final String LOAD_BALANCER_HOST = "vending.jaejun.net";
+    private static final int LOAD_BALANCER_PORT = 9000;// 로드밸런서 접속 포트
 
-    private String[] drinkNames = new String[DRINK_COUNT + 1];
-    private int[] drinkPrices = new int[DRINK_COUNT + 1];
-    private int[] drinkStocks = new int[DRINK_COUNT + 1];
-    private int[] drinkSoldCounts = new int[DRINK_COUNT + 1];
-    private int[] drinkNext = new int[DRINK_COUNT + 1];
-    private int drinkHead = 1;
+    private String[] drinkNames = new String[DRINK_COUNT + 1];// 음료 이름 저장 배열
+    private int[] drinkPrices = new int[DRINK_COUNT + 1];// 음료 가격 저장 배열
+    private int[] drinkStocks = new int[DRINK_COUNT + 1];// 음료 재고 저장 배열
+    private int[] drinkSoldCounts = new int[DRINK_COUNT + 1];// 음료별 판매 수량 저장 배열
+    private int[] drinkNext = new int[DRINK_COUNT + 1];// 음료 순서 연결용 배열
+    private int drinkHead = 1;// 음료 목록의 시작 번호
 
-    private int insertedTotalAmount = 0;
+    private int insertedTotalAmount = 0;// 현재 투입된 총 금액
 
-    private int[] coinCounts = new int[COIN_UNITS.length];
-    private int bill1000Count = 0;
+    private int[] coinCounts = new int[COIN_UNITS.length];// 자판기 내 동전 개수 저장 배열
+    private int bill1000Count = 0;// 자판기 내 1000원 지폐 개수
 
-    private int dailyTotalSales = 0;
-    private int monthlyTotalSales = 0;
-    private int[] dailyDrinkSales = new int[DRINK_COUNT + 1];
-    private int[] monthlyDrinkSales = new int[DRINK_COUNT + 1];
+    private int dailyTotalSales = 0;// 일별 총매출
+    private int monthlyTotalSales = 0;// 월별 총매출
+    private int[] dailyDrinkSales = new int[DRINK_COUNT + 1];// 음료별 일별 매출
+    private int[] monthlyDrinkSales = new int[DRINK_COUNT + 1];// 음료별 월별 매출
 
-    private CardLayout cardLayout;
-    private JPanel mainPanel;
+    private CardLayout cardLayout;// 판매 화면과 관리자 화면 전환용 레이아웃
+    private JPanel mainPanel;// 여러 화면을 담는 메인 패널
 
-    private JLabel moneyLabel;
-    private JLabel changeOutputLabel;
-    private JLabel drinkOutputLabel;
+    private JLabel moneyLabel;// 현재 투입 금액 표시 라벨
+    private JLabel changeOutputLabel;// 거스름돈 및 상태 메시지 표시 라벨
+    private JLabel drinkOutputLabel;// 배출된 음료 표시 라벨
 
-    private JButton[] drinkButtons;
-    private JTextField adminPasswordField;
+    private JButton[] drinkButtons;// 음료 선택 버튼 배열
+    private JTextField adminPasswordField;// 관리자 비밀번호 입력 필드
 
-    private JTable drinkTable;
-    private DefaultTableModel drinkTableModel;
+    private JTable drinkTable;// 관리자 비밀번호 입력 필드
+    private DefaultTableModel drinkTableModel;// 음료 테이블 데이터 모델
 
-    private JLabel coinStatusLabel;
-    private JLabel salesStatusLabel;
+    private JLabel coinStatusLabel;// 관리자 화면의 화폐 현황 표시 라벨
+    private JLabel salesStatusLabel;// 관리자 화면의 매출 현황 표시 라벨
 
-    private Socket socket;
-    private BufferedReader in;
-    private PrintWriter out;
-    private ReceiverThread receiverThread;
-    private String connectedServerName = "서버 미연결";
-    private String clientName = "클라이언트-1";
+    private Socket socket;// 로드밸런서와 연결되는 TCP 소켓
+    private BufferedReader in;// 서버 응답 수신 스트림
+    private PrintWriter out;// 서버 요청 송신 스트림
+    private ReceiverThread receiverThread;// 서버 응답을 지속적으로 수신하는 스레드
+    private String connectedServerName = "서버 미연결";// 현재 연결된 서버 정보
+    private String clientName = "클라이언트-1";// 서버에 전달할 클라이언트 식별 이름
 
+    // 클라이언트 프로그램을 실행하고 자판기 GUI 객체를 생성한다.
     public static void main(String[] args) {
         new Client1();
     }
-
+    // 자판기 데이터와 Swing 화면을 초기화하고 로드밸런서에 연결한다.
     public Client1() {
         drinkNames[1] = "믹스커피";
         drinkNames[2] = "고급믹스커피";
@@ -442,7 +443,7 @@ public class Client1 extends JFrame implements ActionListener {
         connectServer();
         sendRequest("STATUS");
     }
-
+    // 버튼 이벤트를 구분하여 서버 요청 또는 화면 전환 기능을 수행한다.
     public void actionPerformed(ActionEvent e) {
         String command = e.getActionCommand();
 
@@ -469,7 +470,6 @@ public class Client1 extends JFrame implements ActionListener {
             updateAllView();
         } else if (command.equals("RESTOCK_DRINK")) {
             int row = drinkTable.getSelectedRow();
-
             if (row < 0) {
                 JOptionPane.showMessageDialog(this, "재고를 보충할 음료를 선택하세요.", "입력 오류", JOptionPane.WARNING_MESSAGE);
                 return;
@@ -483,11 +483,9 @@ public class Client1 extends JFrame implements ActionListener {
                     "재고 보충",
                     JOptionPane.QUESTION_MESSAGE
             );
-
             if (input == null) {
                 return;
             }
-
             try {
                 int amount = Integer.parseInt(input.trim());
 
@@ -530,7 +528,6 @@ public class Client1 extends JFrame implements ActionListener {
             sendRequest("CHANGE_NAME|" + drinkId + "|" + encode(input));
         } else if (command.equals("CHANGE_DRINK_PRICE")) {
             int row = drinkTable.getSelectedRow();
-
             if (row < 0) {
                 JOptionPane.showMessageDialog(this, "가격을 변경할 음료를 선택하세요.", "입력 오류", JOptionPane.WARNING_MESSAGE);
                 return;
@@ -543,7 +540,6 @@ public class Client1 extends JFrame implements ActionListener {
                     "새 판매 가격을 입력하세요.",
                     drinkPrices[drinkId]
             );
-
             if (input == null) {
                 return;
             }
@@ -555,12 +551,10 @@ public class Client1 extends JFrame implements ActionListener {
                     JOptionPane.showMessageDialog(this, "가격은 1원 이상이어야 합니다.", "입력 오류", JOptionPane.WARNING_MESSAGE);
                     return;
                 }
-
                 if (price % 10 != 0) {
                     JOptionPane.showMessageDialog(this, "가격은 10원 단위로 입력하세요.", "입력 오류", JOptionPane.WARNING_MESSAGE);
                     return;
                 }
-
                 sendRequest("CHANGE_PRICE|" + drinkId + "|" + price);
             } catch (NumberFormatException ex) {
                 JOptionPane.showMessageDialog(this, "숫자만 입력할 수 있습니다.", "입력 오류", JOptionPane.WARNING_MESSAGE);
@@ -593,7 +587,7 @@ public class Client1 extends JFrame implements ActionListener {
             sendRequest("REFILL");
         }
     }
-
+    // 로드밸런서 서버에 TCP 소켓으로 연결하고 수신 스레드를 시작한다.
     private void connectServer() {
         closeConnection();
 
@@ -620,7 +614,7 @@ public class Client1 extends JFrame implements ActionListener {
         connectedServerName = "서버 미연결";
         changeOutputLabel.setText("로드밸런서 연결 실패");
     }
-
+    // 서버 연결 상태를 확인한 뒤 요청 문자열을 서버로 전송한다.
     private String sendRequest(String request) {
         if (socket == null || socket.isClosed() || out == null) {
             connectServer();
@@ -634,7 +628,7 @@ public class Client1 extends JFrame implements ActionListener {
         out.println(request);
         return null;
     }
-
+    // 서버 응답 문자열을 해석하여 화면 상태와 관리자 결과를 반영한다.
     private void applyResponse(String response) {
         String[] part = response.split("\\|", 7);
 
@@ -676,7 +670,7 @@ public class Client1 extends JFrame implements ActionListener {
             }
         }
     }
-
+    // 서버에서 받은 상태 문자열을 파싱하여 클라이언트 화면 데이터에 반영한다.
     private void applyState(String state) {
         String[] part = state.split("\\|", -1);
 
@@ -712,6 +706,7 @@ public class Client1 extends JFrame implements ActionListener {
     }
 
     private class ReceiverThread extends Thread {
+        // 서버에서 수신되는 응답과 상태 갱신 메시지를 지속적으로 처리한다.
         public void run() {
             String message;
 
@@ -731,11 +726,11 @@ public class Client1 extends JFrame implements ActionListener {
 
     private class ResponseUpdateTask implements Runnable {
         private String response;
-
+        // 서버 응답 메시지를 Swing 이벤트 스레드에서 처리하기 위한 작업 객체를 생성한다.
         ResponseUpdateTask(String response) {
             this.response = response;
         }
-
+        // 서버 응답을 화면 상태에 반영한다.
         public void run() {
             applyResponse(response);
         }
@@ -743,11 +738,11 @@ public class Client1 extends JFrame implements ActionListener {
 
     private class PushUpdateTask implements Runnable {
         private String state;
-
+        // 서버 푸시 상태 데이터를 Swing 이벤트 스레드에서 처리하기 위한 작업 객체를 생성한다.
         PushUpdateTask(String state) {
             this.state = state;
         }
-
+        // 서버 푸시 상태를 클라이언트 화면에 반영한다.
         public void run() {
             applyState(state);
             updateAllView();
@@ -755,11 +750,12 @@ public class Client1 extends JFrame implements ActionListener {
     }
 
     private class ServerCloseTask implements Runnable {
+        // 서버 연결 종료 메시지를 Swing 화면에 표시한다.
         public void run() {
             changeOutputLabel.setText("서버 연결 종료");
         }
     }
-
+    // 서버 연결에 사용된 소켓과 입출력 스트림을 정리한다.
     private void closeConnection() {
         try {
             if (in != null) {
@@ -784,7 +780,7 @@ public class Client1 extends JFrame implements ActionListener {
         out = null;
         socket = null;
     }
-
+    // 현재 데이터 상태를 기준으로 판매 화면과 관리자 화면 표시값을 갱신한다.
     private void updateAllView() {
         moneyLabel.setText(insertedTotalAmount + "원");
 
@@ -846,7 +842,7 @@ public class Client1 extends JFrame implements ActionListener {
         coinStatusLabel.setText("화폐 현황: " + getCoinShortStatusText());
         salesStatusLabel.setText("일별 매출: " + dailyTotalSales + "원 / 월별 매출: " + monthlyTotalSales + "원");
     }
-
+    // 현재 보유 동전으로 지정 금액의 거스름돈을 만들 수 있는지 확인한다.
     private boolean canMakeChange(int amount) {
         if (amount == 0) {
             return true;
@@ -861,7 +857,7 @@ public class Client1 extends JFrame implements ActionListener {
 
         return remain == 0;
     }
-
+    // 지정한 동전 단위가 동전 배열에서 위치한 인덱스를 반환한다.
     private int getCoinIndex(int unit) {
         for (int i = 0; i < COIN_UNITS.length; i++) {
             if (COIN_UNITS[i] == unit) {
@@ -871,7 +867,7 @@ public class Client1 extends JFrame implements ActionListener {
 
         return -1;
     }
-
+    // 관리자 화면에 표시할 간단한 화폐 현황 문자열을 생성한다.
     private String getCoinShortStatusText() {
         return "500원 " + coinCounts[getCoinIndex(500)] + "개, "
                 + "100원 " + coinCounts[getCoinIndex(100)] + "개, "
@@ -879,7 +875,7 @@ public class Client1 extends JFrame implements ActionListener {
                 + "10원 " + coinCounts[getCoinIndex(10)] + "개, "
                 + "1000원 지폐 " + bill1000Count + "장";
     }
-
+    // 관리자 비밀번호가 길이, 숫자, 특수문자 조건을 만족하는지 검사한다.
     private boolean isValidAdminPassword(String password) {
         if (password == null || password.length() < 8) {
             return false;
@@ -900,7 +896,7 @@ public class Client1 extends JFrame implements ActionListener {
 
         return hasDigit && hasSpecial;
     }
-
+    // 문자열을 UTF-8 기준 Base64 형식으로 인코딩한다.
     private String encode(String text) {
         if (text == null) {
             text = "";
@@ -908,7 +904,7 @@ public class Client1 extends JFrame implements ActionListener {
 
         return Base64.getEncoder().encodeToString(text.getBytes(StandardCharsets.UTF_8));
     }
-
+    // Base64 형식 문자열을 UTF-8 기준 원문 문자열로 디코딩한다.
     private String decode(String text) {
         if (text == null || text.length() == 0) {
             return "";

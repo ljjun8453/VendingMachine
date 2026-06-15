@@ -17,8 +17,8 @@ public class Client2 extends JFrame implements ActionListener {
     private static final int[] MONEY_UNITS = {10, 50, 100, 500, 1000};
     private static final int[] COIN_UNITS = {500, 100, 50, 10};
     private static final int RESERVE_COIN_COUNT = 10;
-    //private static final String LOAD_BALANCER_HOST = "127.0.0.1";
-    private static final String LOAD_BALANCER_HOST = "vending.jaejun.net";
+    private static final String LOAD_BALANCER_HOST = "127.0.0.1";
+    //private static final String LOAD_BALANCER_HOST = "vending.jaejun.net";
     private static final int LOAD_BALANCER_PORT = 9000;
 
     private String[] drinkNames = new String[DRINK_COUNT + 1];

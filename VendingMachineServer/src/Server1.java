@@ -6,78 +6,86 @@ import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 
 public class Server1 {
-    private static final int DRINK_COUNT = 8;
-    private static final int DEFAULT_STOCK = 10;
-    private static final int MAX_TOTAL_MONEY = 7000;
-    private static final int MAX_BILL_MONEY = 5000;
+    // 음료 개수, 기본 재고, 최대 투입 금액 등 자판기 기본 설정값들
+    private static final int DRINK_COUNT = 8;   // 판매 음료 개수
+    private static final int DEFAULT_STOCK = 10;    // 음료별 기본 재고
+    private static final int MAX_TOTAL_MONEY = 7000;    // 동전과 지폐 포함 최대 투입 가능 금액
+    private static final int MAX_BILL_MONEY = 5000; // 1000원 지폐 최대 투입 가능 금액
+    // 사용 가능한 화폐 단위와 거스름돈 계산에 사용할 동전 단위
     private static final int[] MONEY_UNITS = {10, 50, 100, 500, 1000};
     private static final int[] COIN_UNITS = {500, 100, 50, 10};
     private static final int RESERVE_COIN_COUNT = 10;
-
+    // 현재 서버의 역할 이름과 listen 포트 저장할 변수들
     private static String role;
     private static int listenPort;
-
+    // 동기화할 다른 서버들의 IP와 포트 정보
     private static String[] peerHosts = new String[10];
     private static int[] peerPorts = new int[10];
     private static int peerCount = 0;
-
+    // 관리자 비밀번호
     private static String adminPassword = "12345678";
-
-    private static String[] drinkNames = new String[DRINK_COUNT + 1];
-    private static int[] drinkPrices = new int[DRINK_COUNT + 1];
-    private static int[] drinkStocks = new int[DRINK_COUNT + 1];
-    private static int[] drinkSoldCounts = new int[DRINK_COUNT + 1];
+    // 음료 정보 저장 배열
+    private static String[] drinkNames = new String[DRINK_COUNT + 1];   // 음료 이름
+    private static int[] drinkPrices = new int[DRINK_COUNT + 1];    // 음료 가격
+    private static int[] drinkStocks = new int[DRINK_COUNT + 1];    // 음료 재고
+    private static int[] drinkSoldCounts = new int[DRINK_COUNT + 1];    // 음료별 판매 수량
+    // 음료 순서를 연결하기 위한 배열과 변수
     private static int[] drinkNext = new int[DRINK_COUNT + 1];
     private static int drinkHead = 1;
-
-    private static int[] coinCounts = new int[COIN_UNITS.length];
-    private static int bill1000Count = 0;
-
-    private static int dailyTotalSales = 0;
-    private static int monthlyTotalSales = 0;
-    private static int[] dailyDrinkSales = new int[DRINK_COUNT + 1];
-    private static int[] monthlyDrinkSales = new int[DRINK_COUNT + 1];
-
+    // 자판기 내부 화폐 보유 현황
+    private static int[] coinCounts = new int[COIN_UNITS.length];   // 500, 100, 50, 10원 동전 개수
+    private static int bill1000Count = 0;   // 1000원 지폐 개수
+    // 전체 매출 및 음료별 매출 정보
+    private static int dailyTotalSales = 0; // 일별 총매출
+    private static int monthlyTotalSales = 0;   // 월별 총매출
+    private static int[] dailyDrinkSales = new int[DRINK_COUNT + 1];    // 음료별 일별 매출
+    private static int[] monthlyDrinkSales = new int[DRINK_COUNT + 1];  // 음료별 월별 매출
+    // 연결리스트로 관리되는 음료 목록의 시작 노드
     private static DrinkNode drinkListHead;
-
-    private static PrintWriter[] pushClientOuts = new PrintWriter[100];
-    private static String[] pushClientNames = new String[100];
+    // 실시간 상태 전송을 위한 접속 클라이언트 목록
+    private static PrintWriter[] pushClientOuts = new PrintWriter[100]; // 클라이언트 출력 스트림
+    private static String[] pushClientNames = new String[100];  // 클라이언트 이름
     private static int pushClientCount = 0;
-
+    // 판매 기록 저장용 스택
     private static final int SALE_STACK_SIZE = 100;
     private static String[] saleStack = new String[SALE_STACK_SIZE];
     private static int saleStackTop = -1;
-
+    // 재고 부족 알림 저장용 큐
     private static final int ALERT_QUEUE_SIZE = 100;
     private static String[] alertQueue = new String[ALERT_QUEUE_SIZE];
     private static int alertFront = 0;
     private static int alertRear = 0;
     private static int alertCount = 0;
-
+    // 가격순 음료 조회를 위한 트리의 루트 노드
     private static PriceTreeNode priceTreeRoot;
-
+    // 여러 클라이언트 자판기 상태를 각각 저장하기 위한 배열
     private static final int MACHINE_COUNT = 4;
     private static String[] machineNames = {"", "클라이언트-1", "클라이언트-2", "클라이언트-3", "클라이언트-4"};
+    // 자판기별 음료 정보 저장 배열
     private static String[][] machineDrinkNames = new String[MACHINE_COUNT + 1][DRINK_COUNT + 1];
     private static int[][] machineDrinkPrices = new int[MACHINE_COUNT + 1][DRINK_COUNT + 1];
     private static int[][] machineDrinkStocks = new int[MACHINE_COUNT + 1][DRINK_COUNT + 1];
     private static int[][] machineDrinkSoldCounts = new int[MACHINE_COUNT + 1][DRINK_COUNT + 1];
+    // 자판기별 매출 정보 저장 배열
     private static int[][] machineDailyDrinkSales = new int[MACHINE_COUNT + 1][DRINK_COUNT + 1];
     private static int[][] machineMonthlyDrinkSales = new int[MACHINE_COUNT + 1][DRINK_COUNT + 1];
+    // 자판기별 화폐 정보 저장 배열
     private static int[][] machineCoinCounts = new int[MACHINE_COUNT + 1][COIN_UNITS.length];
     private static int[] machineBill1000Count = new int[MACHINE_COUNT + 1];
+    // 자판기별 총매출 및 관리자 비밀번호 저장 배열
     private static int[] machineDailyTotalSales = new int[MACHINE_COUNT + 1];
     private static int[] machineMonthlyTotalSales = new int[MACHINE_COUNT + 1];
     private static String[] machineAdminPassword = new String[MACHINE_COUNT + 1];
 
+    // Server1의 실행 정보를 설정하고 초기화, 헬스체크, TCP 서버 실행을 시작한다.
     public static void main(String[] args) {
         role = "서버1";
         listenPort = 9001;
 
         peerHosts[0] = "127.0.0.1";
         peerPorts[0] = 9002;
-        //peerHosts[1] = "127.0.0.1";
-        peerHosts[1] = "192.168.0.17";
+        peerHosts[1] = "127.0.0.1";
+        //peerHosts[1] = "192.168.0.17";
         peerPorts[1] = 9003;
         peerCount = 2;
 
@@ -86,6 +94,7 @@ public class Server1 {
         startServer();
     }
 
+    // 음료, 가격, 재고, 화폐, 연결 리스트 및 자판기별 초기 상태를 설정한다.
     private static void initData() {
         drinkNames[1] = "믹스커피";
         drinkNames[2] = "고급믹스커피";
@@ -126,6 +135,7 @@ public class Server1 {
         }
     }
 
+    // 지정된 포트에서 클라이언트 접속을 대기하고 접속마다 처리 스레드를 생성한다.
     private static void startServer() {
         ServerSocket listenSocket = null;
 
@@ -151,6 +161,7 @@ public class Server1 {
         }
     }
 
+    // 다른 서버 상태를 주기적으로 확인하는 헬스체크 스레드를 시작한다.
     private static void startHealthCheckThread() {
         HealthCheckThread thread = new HealthCheckThread();
         thread.setDaemon(true);
@@ -158,6 +169,7 @@ public class Server1 {
     }
 
     private static class HealthCheckThread extends Thread {
+        // 등록된 동기화 대상 서버들의 상태를 10초마다 확인한다.
         public void run() {
             while (true) {
                 for (int i = 0; i < peerCount; i++) {
@@ -173,6 +185,7 @@ public class Server1 {
         }
     }
 
+    // 지정된 서버에 PING을 전송하고 PONG 응답 여부로 정상 상태를 확인한다.
     private static void checkPeer(String host, int port) {
         Socket socket = null;
         BufferedReader in = null;
@@ -213,11 +226,11 @@ public class Server1 {
 
         private String drinkOutput = "없음";
         private String changeOutput = "0원";
-
+        // 클라이언트 소켓을 저장하여 클라이언트별 요청 처리 스레드를 생성한다.
         ClientThread(Socket socket) {
             this.socket = socket;
         }
-
+        // 클라이언트 요청, 서버 동기화 요청, 헬스체크 요청을 수신하여 처리한다.
         public void run() {
             try {
                 in = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
@@ -244,7 +257,7 @@ public class Server1 {
                 }
             }
         }
-
+        // 클라이언트 초기 접속 요청을 처리하고 일반 명령을 자판기 명령 처리로 전달한다.
         private String processCommand(String command) {
             if (command.startsWith("HELLO|")) {
                 clientName = decode(command.substring(6));
@@ -270,7 +283,7 @@ public class Server1 {
                 return response;
             }
         }
-
+        // 클라이언트가 전송한 자판기 명령어를 구분하여 해당 기능 메소드로 분기한다.
         private String processMachineCommand(String command) {
             if (command.equals("STATUS")) {
                 return makeResponse("OK", "", drinkOutput, changeOutput, insertedTotalAmount);
@@ -317,17 +330,16 @@ public class Server1 {
             } else if (command.equals("REFILL")) {
                 return refillReserveMoney();
             }
-
             return makeResponse("ERROR", "알 수 없는 요청입니다.", drinkOutput, changeOutput, insertedTotalAmount);
         }
-
+        // 현재 자판기 상태를 저장하고 다른 서버 및 접속 클라이언트에 상태를 전파한다.
         private void saveAndBroadcastCurrentMachine() {
             saveMachineState(machineIndex);
             String state = makeState();
             syncToPeers(clientName, state);
             broadcastStateToClient(clientName, state);
         }
-
+        // 투입 화폐의 유효성 검사 후 자판기 보유 화폐와 현재 투입 금액을 갱신한다.
         private String insertMoney(int money) {
             if (!isAllowedMoney(money)) {
                 changeOutput = "사용할 수 없는 화폐입니다.";
@@ -365,7 +377,7 @@ public class Server1 {
 
             return makeResponse("OK", "", drinkOutput, changeOutput, insertedTotalAmount);
         }
-
+        // 음료 구매 가능 여부를 검사하고 재고, 매출, 거스름돈, 판매 기록을 갱신한다.
         private String buyDrink(int drinkId) {
             synchronized (Server1.class) {
                 if (drinkId < 1 || drinkId > DRINK_COUNT) {
@@ -402,7 +414,6 @@ public class Server1 {
                         enqueueStockAlert(clientName, node.name, node.stock);
                     }
                 }
-
                 drinkSoldCounts[drinkId]++;
                 dailyTotalSales += drinkPrices[drinkId];
                 monthlyTotalSales += drinkPrices[drinkId];
@@ -417,17 +428,15 @@ public class Server1 {
                 } else {
                     changeOutput = "0원";
                 }
-
                 insertedTotalAmount = 0;
                 insertedBill1000Count = 0;
                 clearInsertedCoins();
 
                 saveAndBroadcastCurrentMachine();
-
                 return makeResponse("OK", "", drinkOutput, changeOutput, insertedTotalAmount);
             }
         }
-
+        // 현재 투입된 화폐를 반환하고 투입 금액 및 투입 화폐 기록을 초기화한다.
         private String returnMoney() {
             synchronized (Server1.class) {
                 if (insertedTotalAmount == 0) {
@@ -454,7 +463,7 @@ public class Server1 {
                 return makeResponse("OK", "", drinkOutput, changeOutput, insertedTotalAmount);
             }
         }
-
+        // 관리자 요청에 따라 선택한 음료의 재고를 보충한다.
         private String restockDrink(int drinkId, int amount) {
             synchronized (Server1.class) {
                 if (drinkId < 1 || drinkId > DRINK_COUNT) {
@@ -473,7 +482,7 @@ public class Server1 {
                 return makeResponse("DIALOG", drinkNames[drinkId] + " 재고를 " + amount + "개 보충했습니다.", drinkOutput, changeOutput, insertedTotalAmount);
             }
         }
-
+        // 관리자 요청에 따라 선택한 음료 이름을 변경한다.
         private String changeDrinkName(int drinkId, String name) {
             synchronized (Server1.class) {
                 if (drinkId < 1 || drinkId > DRINK_COUNT) {
@@ -498,7 +507,7 @@ public class Server1 {
                 return makeResponse("DIALOG", "음료 이름을 변경했습니다.", drinkOutput, changeOutput, insertedTotalAmount);
             }
         }
-
+        // 관리자 요청에 따라 선택한 음료 가격을 변경한다.
         private String changeDrinkPrice(int drinkId, int price) {
             synchronized (Server1.class) {
                 if (drinkId < 1 || drinkId > DRINK_COUNT) {
@@ -521,7 +530,7 @@ public class Server1 {
                 return makeResponse("DIALOG", "판매 가격을 변경했습니다.", drinkOutput, changeOutput, insertedTotalAmount);
             }
         }
-
+        // 반환용 기본 동전을 제외한 초과 동전과 지폐를 수금한다.
         private String collectMoney() {
             synchronized (Server1.class) {
                 int collected = 0;
@@ -542,7 +551,7 @@ public class Server1 {
                 return makeResponse("DIALOG", "수금 완료: " + collected + "원\n10개를 초과한 동전과 지폐만 수금했습니다.", drinkOutput, changeOutput, insertedTotalAmount);
             }
         }
-
+        // 관리자 비밀번호 조건을 검사하고 새 비밀번호로 변경한다.
         private String changePassword(String password) {
             synchronized (Server1.class) {
                 if (!isValidAdminPassword(password)) {
@@ -556,7 +565,7 @@ public class Server1 {
                 return makeResponse("DIALOG", "관리자 비밀번호를 변경했습니다.", drinkOutput, changeOutput, insertedTotalAmount);
             }
         }
-
+        // 부족한 반환용 동전을 기본 보유 개수까지 보충한다.
         private String refillReserveMoney() {
             synchronized (Server1.class) {
                 int added = 0;
@@ -571,17 +580,18 @@ public class Server1 {
 
                 saveAndBroadcastCurrentMachine();
 
-                return makeResponse("DIALOG", "기본 화폐 보충 완료: " + added + "원\n부족한 동전만 10개까지 보충했습니다.", drinkOutput, changeOutput, insertedTotalAmount);
+                return makeResponse("DIALOG", "기본 화폐 보충 완료: " + added + "원\n부족한 동전만 10개까지 보충했습니다.",
+                        drinkOutput, changeOutput, insertedTotalAmount);
             }
         }
-
+        // 현재 클라이언트가 투입한 동전 기록을 초기화한다.
         private void clearInsertedCoins() {
             for (int i = 0; i < insertedCoinCounts.length; i++) {
                 insertedCoinCounts[i] = 0;
             }
         }
     }
-
+    // 현재 자판기 상태를 다른 서버들에 SYNC_STATE 형식으로 동기화한다.
     private static synchronized void syncToPeers(String machineName, String state) {
         for (int i = 0; i < peerCount; i++) {
             Socket socket = null;
@@ -605,11 +615,11 @@ public class Server1 {
             }
         }
     }
-
+    // 클라이언트에 전송할 응답 문자열을 RES 프로토콜 형식으로 생성한다.
     private static synchronized String makeResponse(String result, String message, String drinkOutput, String changeOutput, int insertedTotal) {
         return "RES|" + result + "|" + encode(message) + "|" + encode(drinkOutput) + "|" + encode(changeOutput) + "|" + insertedTotal + "|" + makeState();
     }
-
+    // 현재 자판기 상태 전체를 문자열 형태로 직렬화한다.
     private static synchronized String makeState() {
         StringBuilder sb = new StringBuilder();
 
@@ -640,7 +650,7 @@ public class Server1 {
 
         return sb.toString();
     }
-
+    // 수신한 상태 문자열을 파싱하여 현재 서버 상태에 반영한다.
     private static synchronized void applyState(String state) {
         String[] part = state.split("\\|", -1);
 
@@ -679,7 +689,7 @@ public class Server1 {
 
         rebuildDrinkLinkedList();
     }
-
+    // 배열에 저장된 음료 정보를 기준으로 연결 리스트와 가격 트리를 재구성한다.
     private static void rebuildDrinkLinkedList() {
         drinkListHead = null;
         DrinkNode prev = null;
@@ -698,7 +708,7 @@ public class Server1 {
 
         rebuildPriceTree();
     }
-
+    // 연결 리스트에서 지정한 ID의 음료 노드를 검색한다.
     private static DrinkNode findDrinkNodeById(int id) {
         DrinkNode current = drinkListHead;
 
@@ -712,7 +722,7 @@ public class Server1 {
 
         return null;
     }
-
+    // 배열의 음료 정보를 연결 리스트의 해당 노드에 반영한다.
     private static void updateDrinkNode(int id) {
         DrinkNode node = findDrinkNodeById(id);
 
@@ -725,7 +735,7 @@ public class Server1 {
             node.monthlySales = monthlyDrinkSales[id];
         }
     }
-
+    // 연결 리스트에서 동일한 음료 이름이 존재하는지 검색한다.
     private static int searchDrinkByName(String name) {
         DrinkNode current = drinkListHead;
 
@@ -740,8 +750,7 @@ public class Server1 {
         return -1;
     }
 
-
-
+    // 클라이언트 이름에 해당하는 자판기 번호를 반환한다.
     private static int getMachineIndex(String name) {
         for (int i = 1; i <= MACHINE_COUNT; i++) {
             if (machineNames[i].equals(name)) {
@@ -751,7 +760,7 @@ public class Server1 {
 
         return 1;
     }
-
+    // 지정한 자판기의 저장 상태를 현재 작업 상태로 불러온다.
     private static synchronized void loadMachineState(int machineIndex) {
         for (int i = 1; i <= DRINK_COUNT; i++) {
             drinkNames[i] = machineDrinkNames[machineIndex][i];
@@ -778,7 +787,7 @@ public class Server1 {
 
         rebuildDrinkLinkedList();
     }
-
+    // 현재 작업 상태를 지정한 자판기 저장 배열에 저장한다.
     private static synchronized void saveMachineState(int machineIndex) {
         for (int i = 1; i <= DRINK_COUNT; i++) {
             machineDrinkNames[machineIndex][i] = drinkNames[i];
@@ -798,7 +807,7 @@ public class Server1 {
         machineMonthlyTotalSales[machineIndex] = monthlyTotalSales;
         machineAdminPassword[machineIndex] = adminPassword;
     }
-
+    // 다른 서버로부터 수신한 동기화 데이터를 해당 자판기 상태에 반영한다.
     private static synchronized void receiveSyncState(String syncData) {
         String[] part = syncData.split("\\|", 2);
 
@@ -817,7 +826,7 @@ public class Server1 {
 
         System.out.println("[" + role + "] 서버 동기화 데이터 수신: " + machineName);
     }
-
+    // 실시간 상태 전송을 위해 접속 클라이언트 정보를 등록한다.
     private static synchronized void registerPushClient(String name, PrintWriter out) {
         if (pushClientCount < pushClientOuts.length) {
             pushClientNames[pushClientCount] = name;
@@ -826,7 +835,7 @@ public class Server1 {
             System.out.println("[" + role + "] 실시간 동기화 클라이언트: " + name);
         }
     }
-
+    // 연결이 종료된 클라이언트를 실시간 전송 목록에서 제거한다.
     private static synchronized void removePushClient(PrintWriter out) {
         if (out == null) {
             return;
@@ -839,7 +848,7 @@ public class Server1 {
             }
         }
     }
-
+    // 지정한 위치의 클라이언트 정보를 실시간 전송 목록에서 제거한다.
     private static synchronized void removePushClientAt(int index) {
         for (int i = index; i < pushClientCount - 1; i++) {
             pushClientOuts[i] = pushClientOuts[i + 1];
@@ -850,7 +859,7 @@ public class Server1 {
         pushClientOuts[pushClientCount] = null;
         pushClientNames[pushClientCount] = null;
     }
-
+    // 같은 자판기 이름을 가진 클라이언트에게 최신 상태를 PUSH_STATE로 전송한다.
     private static synchronized void broadcastStateToClient(String machineName, String state) {
         String message = "PUSH_STATE|" + state;
 
@@ -865,7 +874,7 @@ public class Server1 {
             }
         }
     }
-
+    // 음료 판매 내역을 스택 구조의 판매 기록 배열에 저장한다.
     private static void pushSaleRecord(String machineName, String drinkName, int price, int stock) {
         String record = java.time.LocalDateTime.now() + " / " + machineName + " / " + drinkName + " / " + price + "원 / 남은재고 " + stock + "개";
 
@@ -881,7 +890,7 @@ public class Server1 {
         saleStack[saleStackTop] = record;
         System.out.println("[" + role + "] 판매 기록 저장: " + saleStack[saleStackTop]);
     }
-
+    // 재고 부족 정보를 큐 구조의 관리자 알림 배열에 저장한다.
     private static void enqueueStockAlert(String machineName, String drinkName, int stock) {
         String alert = java.time.LocalDateTime.now() + " / " + machineName + " / " + drinkName + " 재고 부족: " + stock + "개";
 
@@ -905,7 +914,7 @@ public class Server1 {
         alertCount++;
         System.out.println("[" + role + "] 관리자 알림: " + alert);
     }
-
+    // 음료 가격 정보를 기준으로 가격 검색 트리를 재구성한다.
     private static void rebuildPriceTree() {
         priceTreeRoot = null;
 
@@ -913,7 +922,7 @@ public class Server1 {
             priceTreeRoot = insertPriceTree(priceTreeRoot, i, drinkNames[i], drinkPrices[i]);
         }
     }
-
+    // 가격 기준 이진 탐색 트리에 음료 정보를 삽입한다.
     private static PriceTreeNode insertPriceTree(PriceTreeNode root, int id, String name, int price) {
         if (root == null) {
             return new PriceTreeNode(id, name, price);
@@ -933,7 +942,7 @@ public class Server1 {
 
         return root;
     }
-
+    // 가격 트리를 중위 순회하여 가격순 음료 목록 문자열을 생성한다.
     private static void appendPriceTreeText(StringBuilder sb, PriceTreeNode node) {
         if (node == null) {
             return;
@@ -953,7 +962,7 @@ public class Server1 {
         int dailySales;
         int monthlySales;
         DrinkNode next;
-
+        // 음료 연결 리스트 노드를 생성한다.
         DrinkNode(int id, String name, int price, int stock, int soldCount, int dailySales, int monthlySales) {
             this.id = id;
             this.name = name;
@@ -972,7 +981,7 @@ public class Server1 {
         int price;
         PriceTreeNode left;
         PriceTreeNode right;
-
+        // 가격 기준 트리 노드를 생성한다.
         PriceTreeNode(int id, String name, int price) {
             this.id = id;
             this.name = name;
@@ -981,7 +990,7 @@ public class Server1 {
             this.right = null;
         }
     }
-
+    // 지정한 배열 범위의 값을 콤마로 구분하여 문자열에 추가한다.
     private static void appendArray(StringBuilder sb, int[] array, int start, int end) {
         for (int i = start; i <= end; i++) {
             if (i > start) {
@@ -991,7 +1000,7 @@ public class Server1 {
             sb.append(array[i]);
         }
     }
-
+    // 현재 보유 동전으로 지정 금액의 거스름돈을 만들 수 있는지 확인한다.
     private static boolean canMakeChange(int amount) {
         if (amount == 0) {
             return true;
@@ -1006,7 +1015,7 @@ public class Server1 {
 
         return remain == 0;
     }
-
+    // 지정 금액의 거스름돈을 지급하고 보유 동전 개수를 차감한다.
     private static void makeChange(int amount) {
         int remain = amount;
 
@@ -1019,7 +1028,7 @@ public class Server1 {
             }
         }
     }
-
+    // 지정한 동전 단위가 동전 배열에서 위치한 인덱스를 반환한다.
     private static int getCoinIndex(int unit) {
         for (int i = 0; i < COIN_UNITS.length; i++) {
             if (COIN_UNITS[i] == unit) {
@@ -1029,7 +1038,7 @@ public class Server1 {
 
         return -1;
     }
-
+    // 투입된 화폐가 허용된 화폐 단위인지 확인한다.
     private static boolean isAllowedMoney(int money) {
         for (int unit : MONEY_UNITS) {
             if (unit == money) {
@@ -1039,7 +1048,7 @@ public class Server1 {
 
         return false;
     }
-
+    // 관리자 화면에 표시할 자판기 내 화폐 현황 문자열을 생성한다.
     private static String getCoinStatusText() {
         StringBuilder sb = new StringBuilder();
         int total = 0;
@@ -1061,7 +1070,7 @@ public class Server1 {
 
         return sb.toString();
     }
-
+    // 관리자 화면에 표시할 일별·월별 매출 및 정렬 결과 문자열을 생성한다.
     private static String getSalesText() {
         StringBuilder sb = new StringBuilder();
 
@@ -1095,7 +1104,6 @@ public class Server1 {
             sortIds[i] = i + 1;
             sortValues[i] = monthlyDrinkSales[i + 1];
         }
-
         for (int i = 0; i < DRINK_COUNT - 1; i++) {
             for (int j = 0; j < DRINK_COUNT - 1 - i; j++) {
                 if (sortValues[j] < sortValues[j + 1]) {
@@ -1109,20 +1117,18 @@ public class Server1 {
                 }
             }
         }
-
         sb.append("\n[월별 매출 순위]\n");
 
         for (int i = 0; i < DRINK_COUNT; i++) {
             sb.append(i + 1).append("위: ").append(drinkNames[sortIds[i]]).append(" ").append(sortValues[i]).append("원\n");
         }
-
         sb.append("\n[가격순 음료 목록]\n");
         rebuildPriceTree();
         appendPriceTreeText(sb, priceTreeRoot);
 
         return sb.toString();
     }
-
+    // 관리자 비밀번호가 길이, 숫자, 특수문자 조건을 만족하는지 검사한다.
     private static boolean isValidAdminPassword(String password) {
         if (password == null || password.length() < 8) {
             return false;
@@ -1143,7 +1149,7 @@ public class Server1 {
 
         return hasDigit && hasSpecial;
     }
-
+    // 문자열을 UTF-8 기준 Base64 형식으로 인코딩한다.
     private static String encode(String text) {
         if (text == null) {
             text = "";
@@ -1151,7 +1157,7 @@ public class Server1 {
 
         return Base64.getEncoder().encodeToString(text.getBytes(StandardCharsets.UTF_8));
     }
-
+    // Base64 형식 문자열을 UTF-8 기준 원문 문자열로 디코딩한다.
     private static String decode(String text) {
         if (text == null || text.length() == 0) {
             return "";
@@ -1159,7 +1165,7 @@ public class Server1 {
 
         return new String(Base64.getDecoder().decode(text), StandardCharsets.UTF_8);
     }
-
+    // 소켓과 입출력 스트림을 안전하게 종료한다.
     private static void closeAll(Socket socket, BufferedReader in, PrintWriter out) {
         try {
             if (in != null) {

@@ -76,8 +76,8 @@ public class Server2 {
 
         peerHosts[0] = "127.0.0.1";
         peerPorts[0] = 9001;
-        //peerHosts[1] = "127.0.0.1";
-        peerHosts[1] = "192.168.0.17";
+        peerHosts[1] = "127.0.0.1";
+        //peerHosts[1] = "192.168.0.17";
         peerPorts[1] = 9003;
         peerCount = 2;
 
